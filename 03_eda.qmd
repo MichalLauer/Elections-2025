@@ -1,0 +1,114 @@
+---
+title: EDA
+---
+
+# Preparation
+
+Load libraries.
+
+```{r}
+library(nanoparquet)
+library(plotly)
+```
+
+Read data.
+
+```{r}
+df <- read_parquet(config::get("data", config = "silver"))
+df
+```
+
+# EDA
+
+Development of *all* parties.
+
+```{r}
+df |>
+  plot_ly(
+    x = ~date,
+    y = ~value,
+    color = ~shortcut,
+    colors = ~color,
+    type = 'scatter',
+    mode = 'lines+markers',
+    hoverinfo = 'text',
+    text = ~ paste(
+      "Date:",
+      date,
+      "<br>Value:",
+      scales::percent(value, accuracy = 0.1, suffix = " %"),
+      "<br>Party:",
+      shortcut,
+      "<br>Agency:",
+      agency
+    )
+  ) |>
+  layout(
+    title = "Preference Over Time",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Preference (%)", tickformat = ".0%"),
+    legend = list(title = list(text = "Shortcut"))
+  )
+```
+
+Development of parties that got at least once above 4% threshold.
+
+```{r}
+df |>
+  semi_join(filter(df, value >= 0.04), by = join_by(party == party)) |>
+  plot_ly(
+    x = ~date,
+    y = ~value,
+    color = ~shortcut,
+    colors = ~color,
+    type = 'scatter',
+    mode = 'lines+markers',
+    hoverinfo = 'text',
+    text = ~ paste(
+      "Date:",
+      date,
+      "<br>Value:",
+      scales::percent(value, accuracy = 0.1, suffix = " %"),
+      "<br>Party:",
+      shortcut,
+      "<br>Agency:",
+      agency
+    )
+  ) |>
+  layout(
+    title = "Preference Over Time",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Preference (%)", tickformat = ".0%"),
+    legend = list(title = list(text = "Shortcut"))
+  )
+```
+
+Total participation.
+
+```{r}
+df |>
+  select(date, attendance, agency) |>
+  distinct() |>
+  plot_ly(
+    x = ~date,
+    y = ~attendance,
+    color = ~agency,
+    type = 'scatter',
+    mode = 'lines+markers',
+    hoverinfo = 'text',
+    text = ~ paste(
+      "Date:",
+      date,
+      "<br>Value:",
+      scales::percent(attendance, accuracy = 0.1, suffix = " %"),
+      "<br>Agency:",
+      agency
+    )
+  ) |>
+  layout(
+    title = "Attendance Over Time",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Attendance (%)", tickformat = ".0%"),
+    legend = list(title = list(text = "Agency"))
+  )
+```
