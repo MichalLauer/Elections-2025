@@ -1,0 +1,14 @@
+default:
+  polls:   https://{.type}.programydovoleb.cz/polls/all.json
+  parties: https://{.type}.programydovoleb.cz/party/fetch/{.id}.json
+
+bronze:
+  path:    !expr fs::path("data", "bronze")
+  polls:   !expr fs::path("data", "bronze", "polls.json")
+  parties: !expr fs::path("data", "bronze", "parties.json")
+  
+silver:
+  path:    !expr fs::path("data", "silver")
+  polls:   !expr fs::path("data", "silver", "polls.parquet")
+  parties: !expr fs::path("data", "silver", "parties.parquet")
+  data:    !expr fs::path("data", "silver", "data.parquet")
