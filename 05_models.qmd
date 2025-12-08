@@ -1,0 +1,248 @@
+---
+title: Models
+---
+
+# Preparation
+
+Load libraries.
+
+```{r}
+library(rstan)
+library(bayesplot)
+```
+
+Configure rstan to run in parallel.
+
+```{r setup, include=FALSE}
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+# Simple VAR
+
+- Ignores missing data.
+- Ignores structure from agencies.
+- Ignores length of the poll.
+- Ignores time between polls.
+
+$$
+\begin{aligned}
+y_t &\sim Dir(\phi_t \cdot s_t)            \\ % Data generating process
+\phi_t &= \text{softmax}(x_t)              \\ % Transform latent variable to vector of probabilities
+x_t &= \alpha + \beta x_{t-1} + \sigma_t \\ % Drift in time for latent variable
+\alpha &\sim N(0, 1)                       \\ % Simplified prior for alpha - the long term drift
+\beta_{ii} &\sim N(1, 0.1)                 \\ % Reaction to past "self"
+\beta_{ij} &\sim N(0, 0.1)                 \\ % Reaction to past "others"
+\epsilon_t &\sim N(0, 0.1)                 \\ % Random noise
+s_t &= \frac{N_t}{\kappa}                  \\ % How much weight to give to every poll
+\kappa &\sim \text{Gamma}(4, 2)            \\ % Design effect - how imprecise is it
+\end{aligned}
+$$
+
+
+## Predictive Prior Checking
+
+Create artificial data in CLR form.
+
+$\alpha$ - support of a given party in population
+  - $\alpha > 0$ - increases in popularity
+  - $\alpha < 0$ - decreases in popularity
+
+$\beta_{ii}$ - how does past affect the partys current polling (*memory*)
+  - $\beta_{ii} > 1$ - explosion, increase in party polling further increases it's support
+  - $\beta_{ii} \approx 1$ - party is mainly driven by random shocks
+  - $\beta_{ii} < 1$ - party experiences short term bounces, but goes back to it's support
+
+$\sigma$ - news sensitivity, surprise
+
+```{r}
+T <- 80
+x_start <- c(0.35, 0.30, 0.20, 0.15)
+alpha_input <- c(0.001, 0.000, 0.000, -0.001)
+P <- length(alpha_input)
+beta_input <- diag(c(0.98, 0.98, 0.90, 0.85))
+# beta_input[1, 2] <- -0.03
+# beta_input[3, 2] <- 0.03
+sigma_input <- c(0.1, 0.02, 0.05, 0.05)
+kappa_input <- 2.0
+
+set.seed(789)
+make_clr_matrix <- function(mat) {
+  P <- nrow(mat)
+  new_mat <- mat
+  row_means <- rowMeans(mat)
+  col_means <- colMeans(mat)
+  grand_mean <- mean(mat)
+
+  for (i in 1:P) {
+    for (j in 1:P) {
+      new_mat[i, j] <- mat[i, j] - row_means[i] - col_means[j] + grand_mean
+    }
+  }
+  return(new_mat)
+}
+stan_data <- list(
+  T = T,
+  P = P,
+  N = round(rnorm(T, 1500, 50)),
+  x_start = x_start,
+  sim_alpha = alpha_input,
+  sim_beta = make_clr_matrix(beta_input),
+  sim_sigma = sigma_input,
+  kappa = kappa_input
+)
+```
+
+```{r}
+model_ppc <- stan(
+  model_name = "Simple VAR - PPC",
+  file = "models/simple_var_ppc.stan",
+  data = stan_data,
+  iter = 4000,
+  warmup = 2000,
+  chains = 1,
+  open_progress = FALSE,
+  algorithm = "Fixed_param"
+)
+
+saveRDS(model_ppc, file = config::get("simple_var_ppc", config = "gold"))
+
+print(model_ppc@model_pars)
+model_ppc
+```
+
+### Trace plots
+
+Intercept.
+
+```{r}
+model_ppc |>
+  extract(inc_warmup = TRUE, permuted = FALSE) |>
+  mcmc_trace(
+    regex_pars = "alpha_clr",
+    n_warmup = 2000
+  )
+```
+
+Beta.
+
+```{r}
+model_ppc |>
+  extract(inc_warmup = TRUE, permuted = FALSE) |>
+  mcmc_trace(
+    regex_pars = "beta",
+    n_warmup = 2000,
+    facet_args = list(
+      ncol = 3,
+      nrow = 3
+    )
+  )
+```
+
+Kappa.
+
+```{r}
+model_ppc |>
+  extract(inc_warmup = TRUE, permuted = FALSE) |>
+  mcmc_trace(
+    regex_pars = "kappa",
+    n_warmup = 2000
+  )
+```
+
+Sigma.
+
+```{r}
+model_ppc |>
+  extract(inc_warmup = TRUE, permuted = FALSE) |>
+  mcmc_trace(
+    regex_pars = "sigma",
+    n_warmup = 2000
+  )
+```
+
+Latent variable x.
+
+```{r}
+# TODO...
+```
+
+Phi.
+
+```{r}
+# TODO...
+```
+
+Beta (CLR).
+
+```{r}
+model_ppc |>
+  extract(inc_warmup = TRUE, permuted = FALSE) |>
+  mcmc_trace(
+    regex_pars = "beta_clr",
+    n_warmup = 2000
+  )
+```
+
+### Posteriors
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(rstan)
+
+# 1. Extract the Simulation Data
+# output structure: [Iterations, Days, Parties]
+y_sim <- rstan::extract(model_ppc, pars = "y_sim")$y_sim
+
+# Get dimensions
+n_days <- dim(y_sim)[2]
+n_parties <- dim(y_sim)[3]
+
+# 2. Process Data for Each Party
+plot_data_list <- list()
+
+for (p in 1:n_parties) {
+  # Extract matrix for party p: [Iter, Days]
+  mat_p <- y_sim[,, p]
+
+  # Calculate summary statistics for every day
+  df_p <- data.frame(
+    Day = 1:n_days,
+    Party = paste0("Party ", p),
+    Median = apply(mat_p, 2, median),
+    L50 = apply(mat_p, 2, quantile, probs = 0.25),
+    U50 = apply(mat_p, 2, quantile, probs = 0.75),
+    L90 = apply(mat_p, 2, quantile, probs = 0.05),
+    U90 = apply(mat_p, 2, quantile, probs = 0.95)
+  )
+  plot_data_list[[p]] <- df_p
+}
+
+# Combine into one main dataframe
+df_all <- do.call(rbind, plot_data_list)
+
+# 3. Plot All Parties
+ggplot(df_all, aes(x = Day, group = Party, fill = Party, color = Party)) +
+  # 90% Uncertainty Interval (Lightest transparency)
+  geom_ribbon(aes(ymin = L90, ymax = U90), alpha = 0.15, color = NA) +
+
+  # 50% Uncertainty Interval (Medium transparency)
+  geom_ribbon(aes(ymin = L50, ymax = U50), alpha = 0.3, color = NA) +
+
+  # Median Trend Line (Solid)
+  geom_line(aes(y = Median), size = 1) +
+
+  # Styling
+  theme_minimal() +
+  labs(
+    title = "Projected Vote Share (All Parties)",
+    subtitle = "Median trajectory with 50% and 90% credible intervals",
+    y = "Vote Share",
+    x = "Days"
+  ) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 0.6)) + # Adjust limit as needed
+  scale_fill_brewer(palette = "Set1") + # Nice distinct colors
+  scale_color_brewer(palette = "Set1")
+```
