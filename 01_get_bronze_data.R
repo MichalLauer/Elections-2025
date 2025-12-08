@@ -11,10 +11,6 @@ if (!dir.exists(config::get("path", config = "bronze"))) {
   dir.create(config::get("path", config = "bronze"), recursive = TRUE)
 }
 
-if (!dir.exists(config::get("path", config = "silver"))) {
-  dir.create(config::get("path", config = "silver"), recursive = TRUE)
-}
-
 # Download function
 download_by_type <- function(url, .id = NULL, sleep = 5) {
   try_load <- function(url, .type, .id = NULL) {

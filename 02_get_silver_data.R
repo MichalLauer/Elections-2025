@@ -5,6 +5,11 @@ library(tidyr)
 library(purrr)
 library(nanoparquet)
 
+# Prepare storage
+if (!dir.exists(config::get("path", config = "silver"))) {
+  dir.create(config::get("path", config = "silver"), recursive = TRUE)
+}
+
 # Transform polls
 df_polls <-
   read_json(path = config::get("polls", config = "bronze")) |>
