@@ -18,12 +18,21 @@ options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
 ```
 
-# Simple VAR
+# Model specification
 
-- Ignores missing data.
-- Ignores structure from agencies.
+The main idea is that the support for every party is a latent variable that is sometimes observed through the lens of
+polls. All supports must *talk* to each other (they are *dependent*), e.g. if a support for one party drops, it needs
+to be visible in the support of other parties and/or the overall voter turnout.
+
+## Polls
+
+Every poll can be done by various pollsters, and it is assumed that every polster can be biased, compared to the 
+average poll. Every poll is also as strong as the sample size. We assume that hte polls are well stratified. The length
+of the poll also matters, but we do not have data for this.
+
 - Ignores length of the poll.
-- Ignores time between polls.
+
+## Model
 
 $$
 \begin{aligned}
