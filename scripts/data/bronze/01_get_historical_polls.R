@@ -1,5 +1,4 @@
 # Libraries
-library(fs)
 library(jsonlite)
 library(glue)
 library(httr)
@@ -96,8 +95,6 @@ parties <-
   unlist() |>
   unique() |>
   sort() |>
-  head() |>
-  tail(1) |>
   map(\(.id) {
     print(glue("* Downloading {.id}..."))
     x <- download_by_type(config::get("parties"), .id = .id)
@@ -109,6 +106,7 @@ parties <-
 
     return(x$cis$strany)
   })
+
 write_json(
   x = parties,
   path = config::get("parties", config = "bronze"),

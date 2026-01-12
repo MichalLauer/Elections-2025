@@ -25,6 +25,7 @@ df_polls <-
     agency = factor(agency),
   ) |>
   arrange(date, agency)
+
 write_parquet(
   x = df_polls,
   file = config::get("polls", config = "silver")
@@ -53,6 +54,7 @@ df_parties <-
     name = factor(name),
     shortcut = factor(shortcut)
   )
+
 write_parquet(
   x = df_parties,
   file = config::get("parties", config = "silver")
