@@ -15,6 +15,7 @@ df_polls <-
   read_json(path = config::get("polls", config = "bronze")) |>
   bind_rows() |>
   filter(volby == 166) |>
+  mutate(amount = ifelse(amount == -1, NA, amount)) |>
   select(date = datum, agency, amount, from, to, attendance, entries) |>
   unnest_wider(col = entries) |>
   select(-c(id, poll, mandates)) |>
