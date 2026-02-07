@@ -9,12 +9,15 @@ Load libraries.
 ```{r}
 library(nanoparquet)
 library(plotly)
+library(glue)
 ```
 
 Read data.
 
 ```{r}
-df <- read_parquet(config::get("data", config = "silver"))
+df <- read_parquet(config::get("calendar_long", config = "gold"))
+
+head(df)
 ```
 
 # EDA
@@ -22,24 +25,26 @@ df <- read_parquet(config::get("data", config = "silver"))
 Development of *all* parties.
 
 ```{r}
+party_palette <-
+  df |>
+  distinct(party_shortcut, party_color) |>
+  deframe()
+
 df |>
   plot_ly(
-    x = ~date,
-    y = ~value,
-    color = ~shortcut,
-    colors = ~color,
+    x = ~date_published,
+    y = ~voteshare,
+    color = ~party_shortcut,
+    colors = party_palette,
     type = 'scatter',
     mode = 'lines+markers',
+    connectgaps = TRUE,
     hoverinfo = 'text',
-    text = ~ paste(
-      "Date:",
-      date,
-      "<br>Value:",
-      scales::percent(value, accuracy = 0.1, suffix = " %"),
-      "<br>Party:",
-      shortcut,
-      "<br>Agency:",
-      agency
+    text = ~ glue(
+      "Date: {date_published}<br>",
+      "Value: {scales::percent(voteshare, accuracy = 0.1, suffix = ' %')}<br>",
+      "Party: {party_shortcut} (party_id={party_id})<br>",
+      "Agency: {agency} (agency_id={agency_id})"
     )
   ) |>
   layout(
@@ -47,67 +52,5 @@ df |>
     xaxis = list(title = "Date"),
     yaxis = list(title = "Preference (%)", tickformat = ".0%"),
     legend = list(title = list(text = "Shortcut"))
-  )
-```
-
-Development of parties that got at least once above 5% threshold.
-
-```{r}
-df |>
-  semi_join(filter(df, value >= 0.05), by = join_by(party == party)) |>
-  plot_ly(
-    x = ~date,
-    y = ~value,
-    color = ~shortcut,
-    colors = ~color,
-    type = 'scatter',
-    mode = 'lines+markers',
-    hoverinfo = 'text',
-    text = ~ paste(
-      "Date:",
-      date,
-      "<br>Value:",
-      scales::percent(value, accuracy = 0.1, suffix = " %"),
-      "<br>Party:",
-      shortcut,
-      "<br>Agency:",
-      agency
-    )
-  ) |>
-  layout(
-    title = "Preference Over Time",
-    xaxis = list(title = "Date"),
-    yaxis = list(title = "Preference (%)", tickformat = ".0%"),
-    legend = list(title = list(text = "Shortcut"))
-  )
-```
-
-Total participation.
-
-```{r}
-df |>
-  select(date, attendance, agency) |>
-  distinct() |>
-  plot_ly(
-    x = ~date,
-    y = ~attendance,
-    color = ~agency,
-    type = 'scatter',
-    mode = 'lines+markers',
-    hoverinfo = 'text',
-    text = ~ paste(
-      "Date:",
-      date,
-      "<br>Value:",
-      scales::percent(attendance, accuracy = 0.1, suffix = " %"),
-      "<br>Agency:",
-      agency
-    )
-  ) |>
-  layout(
-    title = "Attendance Over Time",
-    xaxis = list(title = "Date"),
-    yaxis = list(title = "Attendance (%)", tickformat = ".0%"),
-    legend = list(title = list(text = "Agency"))
   )
 ```
