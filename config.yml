@@ -16,5 +16,5 @@ silver:
 gold:
   path:          !expr here::here("data", "1gold")
   mapping:       !expr here::here("data", "1gold", "mapping.json")
-  calendar_wide: !expr here::here("data", "1gold", "calendar_wide.parquet")
+  # calendar_wide: !expr here::here("data", "1gold", "calendar_wide.parquet")
   calendar_long: !expr here::here("data", "1gold", "calendar_long.parquet")
