@@ -3,6 +3,7 @@ library(jsonlite)
 library(dplyr)
 library(tidyr)
 library(purrr)
+library(stringr)
 library(nanoparquet)
 
 # Prepare storage
@@ -33,9 +34,33 @@ df_polls <-
     voteshare = voteshare / 100
   )
 
+# Clean errors
+df_polls_clean <-
+  df_polls |>
+  mutate(
+    errors = if_else(
+      is.na(error),
+      NA,
+      str_extract_all(error, r"(\d,\d)")
+    )
+  ) |>
+  unnest_wider(errors, names_sep = "_", transform = \(x) {
+    x |>
+      str_replace(",", "\\.") |>
+      as.numeric()
+  }) |>
+  rowwise() |>
+  mutate(
+    error_lower = min(errors_1, errors_2),
+    error_upper = max(errors_1, errors_2),
+    # error_upper = max(errors_1, errors_2, na.rm = TRUE)
+  ) |>
+  ungroup() |>
+  select(-c(error, errors_1, errors_2))
+
 # Write polls
 write_parquet(
-  x = df_polls,
+  x = df_polls_clean,
   file = config::get("polls", config = "silver")
 )
 
