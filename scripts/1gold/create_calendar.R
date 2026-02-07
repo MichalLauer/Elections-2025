@@ -5,6 +5,11 @@ library(dplyr)
 library(tidyr)
 library(tibble)
 
+# Prepare storage
+if (!dir.exists(config::get("path", config = "gold"))) {
+  dir.create(config::get("path", config = "gold"), recursive = TRUE)
+}
+
 # Read raw data
 polls_raw <- read_parquet(config::get("polls", config = "silver"))
 parties_raw <- read_parquet(config::get("parties", config = "silver"))
