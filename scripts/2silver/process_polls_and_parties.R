@@ -59,26 +59,26 @@ df_polls <-
   ungroup() |>
   select(-c(error, errors_1, errors_2))
 
-# Compute party of "Others"
-df_polls <-
-  df_polls |>
-  group_by(poll_id) |>
-  group_modify(
-    \(x, group) {
-      current_sum <- sum(x$voteshare, na.rm = TRUE)
-      new_row <- x[1, ] |>
-        mutate(
-          party = 0,
-          voteshare = 1 - current_sum,
-          error_lower = NA,
-          error_upper = NA
-        )
+# # Compute party of "Others"
+# df_polls <-
+#   df_polls |>
+#   group_by(poll_id) |>
+#   group_modify(
+#     \(x, group) {
+#       current_sum <- sum(x$voteshare, na.rm = TRUE)
+#       new_row <- x[1, ] |>
+#         mutate(
+#           party = 0,
+#           voteshare = 1 - current_sum,
+#           error_lower = NA,
+#           error_upper = NA
+#         )
 
-      bind_rows(x, new_row)
-    }
-  ) |>
-  ungroup() |>
-  arrange(-poll_id)
+#       bind_rows(x, new_row)
+#     }
+#   ) |>
+#   ungroup() |>
+#   arrange(-poll_id)
 
 # Create codes for parties and agencies
 df_polls <-
@@ -118,17 +118,22 @@ df_parties <-
     df
   })
 
+# # Add party for Other and factorize
+# df_parties <-
+#   bind_rows(
+#     tibble(
+#       party = 0,
+#       party_shortcut = "XXX",
+#       party_name = "Other parties",
+#       party_color = "#ed08d3ff"
+#     ),
+#     df_parties
+#   ) |>
+#   mutate(party = factor(party))
+
 # Add party for Other and factorize
 df_parties <-
-  bind_rows(
-    tibble(
-      party = 0,
-      party_shortcut = "XXX",
-      party_name = "Other parties",
-      party_color = "#ed08d3ff"
-    ),
-    df_parties
-  ) |>
+  df_parties |>
   mutate(party = factor(party))
 
 # Write parties
