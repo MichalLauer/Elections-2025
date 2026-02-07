@@ -3,17 +3,15 @@ default:
   parties: https://{.type}.programydovoleb.cz/party/fetch/{.id}
 
 bronze:
-  path:        !expr here::here("data", "3bronze")
-  polls:       !expr here::here("data", "3bronze", "polls.json")
-  parties_all: !expr here::here("data", "3bronze", "parties_all.json")
-  parties:     !expr here::here("data", "3bronze", "parties.json")
-  license:     !expr here::here("data", "3bronze", "_license.json")
+  path:    !expr here::here("data", "3bronze")
+  polls:   !expr here::here("data", "3bronze", "polls.json")
+  parties: !expr here::here("data", "3bronze", "parties.json")
+  license: !expr here::here("data", "3bronze", "_license.json")
   
 silver:
   path:    !expr here::here("data", "2silver")
   polls:   !expr here::here("data", "2silver", "polls.parquet")
   parties: !expr here::here("data", "2silver", "parties.parquet")
-  data:    !expr here::here("data", "2silver", "data.parquet")
 
 gold:
   path:          !expr here::here("data", "1gold")

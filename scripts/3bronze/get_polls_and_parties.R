@@ -109,7 +109,7 @@ parties_codes <-
   unique() |>
   sort()
 
-# Download parties
+# Download full party dat
 parties <-
   map(parties_codes, \(.id) {
     print(glue("* Downloading {.id}..."))
@@ -121,45 +121,12 @@ parties <-
     }
 
     return(x)
-  }) |>
-  setNames()
+  })
 
-# Get full party data
-parties_all <-
-  parties |>
-  map("list") |>
-  setNames(parties_codes)
-
-# Save full party data
+# Save parties
 write_json(
-  x = parties_all,
-  path = config::get("parties_all", config = "bronze"),
-  simplifyVector = TRUE,
-  auto_unbox = TRUE,
-  pretty = TRUE
-)
-
-# Create party df
-parties_df <- map_df(parties_all, \(x) {
-  # Get primary data
-  df <- tibble(
-    party_id = x[["VSTRANA"]],
-    party_shortcut = x[["ZKRATKA"]],
-    party_name = x[["NAZEV"]]
-  )
-
-  # Add colors, if available
-  color <- x$`$data`$color[[1]]
-  if (length(color) > 0) {
-    df$party_color <- color[1, "value"]
-  }
-
-  df
-})
-
-# Write parties df
-write_json(
-  x = parties_df,
+  # x = setNames(list_c(map(parties, "list")), paste0("party_", parties_codes)),
+  x = list_c(map(parties, "list")),
   path = config::get("parties", config = "bronze"),
   simplifyVector = TRUE,
   auto_unbox = TRUE,
