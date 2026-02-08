@@ -1,5 +1,6 @@
-TODO
+Modle TODO:
 
-- Nějak imputovat v případě, že strana není
-- Nějak imputovat v případě, že nemám veliksot 
-- Vetší rozptyl s větší délkou od posledního pollu
+- Zohlednit velikost vzorku
+- Zohlednit chybu -> čím menší voteshare, tím větší chyba
+- Zohlednit spojení stran, odhadnout vliv?
+- Implementovat případ, kdy je více polls v jeden den
