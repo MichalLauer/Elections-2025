@@ -10,6 +10,7 @@ Load libraries.
 library(nanoparquet)
 library(plotly)
 library(glue)
+library(tibble)
 ```
 
 Read data.
@@ -20,16 +21,20 @@ df <- read_parquet(config::get("calendar_long", config = "gold"))
 head(df)
 ```
 
-# EDA
-
-Development of *all* parties.
+Create colors.
 
 ```{r}
 party_palette <-
   df |>
   distinct(party_shortcut, party_color) |>
   deframe()
+```
 
+# EDA
+
+Development of *all* parties.
+
+```{r}
 df |>
   plot_ly(
     x = ~date_published,
@@ -49,6 +54,41 @@ df |>
   ) |>
   layout(
     title = "Preference Over Time",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Preference (%)", tickformat = ".0%"),
+    legend = list(title = list(text = "Shortcut"))
+  )
+```
+
+```{r}
+no_merge_parties <- c(
+  "768", # ANO
+  "1178", # Auto
+  "1327", # SPOLU
+  "166", # STAN
+  "1245" # Přísaha
+)
+
+df |>
+  filter(party %in% no_merge_parties) |>
+  plot_ly(
+    x = ~date_published,
+    y = ~voteshare,
+    color = ~party_shortcut,
+    colors = party_palette,
+    type = 'scatter',
+    mode = 'lines+markers',
+    connectgaps = TRUE,
+    hoverinfo = 'text',
+    text = ~ glue(
+      "Date: {date_published}<br>",
+      "Value: {scales::percent(voteshare, accuracy = 0.1, suffix = ' %')}<br>",
+      "Party: {party_shortcut} (party_id={party_id})<br>",
+      "Agency: {agency} (agency_id={agency_id})"
+    )
+  ) |>
+  layout(
+    title = "Parties without merging",
     xaxis = list(title = "Date"),
     yaxis = list(title = "Preference (%)", tickformat = ".0%"),
     legend = list(title = list(text = "Shortcut"))
