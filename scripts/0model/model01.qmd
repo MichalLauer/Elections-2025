@@ -37,54 +37,59 @@ ggplot.
 scale_color_parties <- function(parties) {
   scale_color_manual(
     name = "Party",
-    values = setNames(parties$party_color, parties$party_shortcut)
+    values = setNames(parties$party_color, parties$party_stan),
+    labels = setNames(parties$party_shortcut, parties$party_stan)
+  )
+}
+
+scale_fill_parties <- function(parties) {
+  scale_fill_manual(
+    name = "Party",
+    values = setNames(parties$party_color, parties$party_stan),
+    labels = setNames(parties$party_shortcut, parties$party_stan)
+  )
+}
+
+scale_x_parties <- function(parties) {
+  list(
+    scale_x_continuous(
+      breaks = parties$party_stan,
+      labels = parties$party_shortcut
+    ),
+    theme(
+      panel.grid.major.x = element_blank()
+    )
   )
 }
 
 scale_x_polls <- function(cal) {
-  scale_x_continuous(
-    name = NULL,
-    breaks = seq(from = 0, to = max(cal$t), by = 25),
-    limits = c(0, max(cal$t)),
-    expand = expansion(add = 5)
+  list(
+    scale_x_continuous(
+      name = NULL,
+      breaks = seq(from = 0, to = max(cal$t), by = 25),
+      minor_breaks = seq(from = 0, to = max(cal$t), by = 25/2),
+      limits = c(0, max(cal$t)),
+      expand = expansion(add = 5)
+    ),
+    theme(
+      panel.grid.minor.x = element_line(linetype = "dashed")
+    )
   )
 }
 
-scale_x_parties <- function(party_map) {
-  scale_x_continuous(
-    breaks = party_map$party_stan,
-    labels = party_map$party_shortcut
-  )
-}
-
-scale_shape_type <- function() {
-  scale_shape_manual(
-    name = "Model type",
-    values = c("prior" = 19, "posterior" = 4),
-    breaks = c("prior", "posterior")
-  )
-}
-
-scale_color_type <- function() {
-  scale_color_manual(
-    name = "Model type",
-    values = c("prior" = "lightgreen", "posterior" = "darkblue"),
-    breaks = c("prior", "posterior")
-  )
-}
-
-scale_fill_type <- function() {
-  scale_fill_manual(
-    name = "Model type",
-    values = c("prior" = "lightgreen", "posterior" = "darkblue"),
-    breaks = c("prior", "posterior")
-  )
-}
-
-scale_y_voteshare <- function() {
-  scale_y_continuous(
-    name = "voteshare [%]",
-    labels = scales::label_percent(suffix = " %")
+scale_y_voteshare <- function(ylim = 1) {
+  list(
+    scale_y_continuous(
+      name = "voteshare [%]",
+      breaks = seq(0, 1, by = 0.25),
+      minor_breaks = seq(0, 1, by = 0.25/2),
+      labels = scales::label_percent(suffix = " %"),
+      limits = c(0, ylim),
+      expand = expansion()
+    ),
+    theme(
+      panel.grid.minor.y = element_line(linetype = "dashed")
+    )
   )
 }
 ```
@@ -129,7 +134,7 @@ Get only one poll per day.
 ```{r}
 df_full <-
   cal |>
-  filter(!is.na(poll_id)) |>
+  filter(!is.na(poll_id), !is.na(sample_size)) |>
   slice_max(poll_id, by = t)
 
 df_full
@@ -141,7 +146,7 @@ Prepare data.
 data_polls <-
   df_full |>
   filter(party %in% no_merge_parties) |>
-  select(t, party, voteshare) |>
+  select(t, party, voteshare, sample_size) |>
   pivot_wider(
     names_from = party,
     values_from = voteshare
@@ -156,7 +161,7 @@ Extract initial state.
 initial_poll <-
   data_polls |>
   filter(t == 0) |>
-  select(-t) |>
+  select(all_of(no_merge_parties)) |>
   unlist()
 
 print(initial_poll)
@@ -173,14 +178,13 @@ Map parties to names.
 ```{r}
 party_map <-
   data_polls |>
-  select(-t) |>
+  select(all_of(no_merge_parties)) |>
   pivot_longer(cols = everything()) |>
   distinct(party = name) |>
   mutate(
     party_stan = row_number()
   ) |>
   left_join(parties, by = join_by(party))
-
 
 party_map
 ```
@@ -190,7 +194,7 @@ Make sure the data is correctly ordered.
 ```{r}
 data_polls <-
   data_polls |>
-  select(t, all_of(party_map$party))
+  select(t, sample_size, all_of(party_map$party))
 
 data_polls
 ```
@@ -201,14 +205,20 @@ data_polls
 stan_data <- list(
   T = max(cal$t),
   P = nrow(data_polls),
-  K = ncol(data_polls) - 1,
-  y = as.matrix(data_polls[, -1]),
+  K = length(no_merge_parties),
+  y = as.matrix(data_polls[, no_merge_parties]),
   yt = data_polls$t,
+  yn = data_polls$sample_size,
   initial_state = initial_poll
 )
 
+saveRDS(
+  object = stan_data,
+  file = here::here("models", "model01", "input.RDS")
+)
+
 model <- cmdstan_model(
-  stan_file = here::here("data", "0model", "model01", "model.stan")
+  stan_file = here::here("models", "model01", "model.stan")
 )
 
 stan_data$lik <- 0
@@ -216,582 +226,484 @@ fit_prior <- model$sample(
   data = stan_data,
   chains = 1
 )
+fit_prior$save_object(
+  file = here::here("models", "model01", "model_prior_fit.RDS")
+)
 
 stan_data$lik <- 1
 fit_post <- model$sample(
   data = stan_data,
   chains = 1
 )
+fit_post$save_object(
+  file = here::here("models", "model01", "model_posterior_fit.RDS")
+)
 ```
 
-## Model Convergence
+Add Other category.
 
 ```{r}
-# mcmc_trace(alpha_log)
+# Add "Others"
+party_map <- bind_rows(party_map, tibble(
+  party = "0000",
+  party_stan = max(party_map$party_stan) + 1,
+  party_shortcut = "X",
+  party_name = "Ostatní",
+  party_color = "#000"
+))
 ```
-
-# Variables
 
 Generate samples.
 
 ```{r}
-mu_raw_pri <- fit_prior$draws(variables = "mu_raw")
-mu_raw_post <- fit_post$draws(variables = "mu_raw")
-
-mu_pri <- fit_prior$draws(variables = "mu")
-mu_post <- fit_post$draws(variables = "mu")
-
-beta_pri <- fit_prior$draws(variables = "beta")
-beta_post <- fit_post$draws(variables = "beta")
-
-sigma_pri <- fit_prior$draws(variables = "sigma")
-
-alpha_raw_pri <- fit_prior$draws(variables = "alpha_raw")
-alpha_raw_post <- fit_post$draws(variables = "alpha_raw")
-
-alpha_pri <- fit_prior$draws(variables = "alpha")
-alpha_post <- fit_post$draws(variables = "alpha")
-```
-
-Summarise samples
-
-```{r}
-summarise_samples <- function(x, party, extract = "tk") {
-  df <- x |>
-    summarise_draws(
-      mean,
-      "sd",
-      ~ quantile(.x, probs = c(0.055, 0.945)),
-      default_convergence_measures()
-    )
-
-  if (!is.null(extract)) {
-    if (extract == "t") {
-      df <-
-        df |>
-        mutate(
-          t = as.numeric(str_extract(variable, r"(\[(\d+)])", group = 1))
-        )
-    } else if (extract == "k") {
-      df <-
-        df |>
-        mutate(
-          k = as.numeric(str_extract(variable, r"(\[(\d+)\])", group = 1))
-        )
-    } else if (extract == "tk") {
-      df <-
-        df |>
-        mutate(
-          t = as.numeric(str_extract(variable, r"(\[(\d+),\d+\])", group = 1)),
-          k = as.numeric(str_extract(variable, r"(\[\d+,(\d+)\])", group = 1))
-        )
-    }
-
-    if (str_detect(extract, "k")) {
-      df <-
-        df |>
-        left_join(
-          party,
-          by = join_by(k == party_stan),
-          relationship = "many-to-one"
-        )
-    }
-  }
-
-  return(df)
-}
-
-pri_post_summary <- function(prior_, posterior_, party_map_, extract = "tk") {
-  prior <- NULL
+pp_draws <- function(prior_, posterior_, var, index_names = NULL) {
+  df_prior <- NULL
   if (!is.null(prior_)) {
-    prior <- summarise_samples(
-      x = prior_,
-      party = party_map_,
-      extract = extract
-    )
-    prior$type <- "prior"
+    df_prior <-
+      prior_$draws(variables = var) |>
+      as_draws_df() |>
+      as_tibble() |>
+      mutate(type = "prior")
   }
 
-  posterior <- NULL
+  df_posterior <- NULL
   if (!is.null(posterior_)) {
-    posterior <- summarise_samples(
-      x = posterior_,
-      party = party_map_,
-      extract = extract
-    )
-    posterior$type <- "posterior"
+    df_posterior <-
+      posterior_$draws(variables = var) |>
+      as_draws_df() |>
+      as_tibble() |>
+      mutate(type = "posterior")
   }
 
-  bind_rows(prior, posterior)
-}
-
-mu_raw <- pri_post_summary(mu_raw_pri, mu_raw_post, party_map, extract = "k")
-mu <- pri_post_summary(mu_pri, mu_post, party_map, extract = "k")
-beta <- pri_post_summary(beta_pri, beta_post, party_map, extract = "k")
-sigma <- pri_post_summary(sigma_pri, NULL, party_map, extract = "k")
-alpha_raw <- pri_post_summary(alpha_raw_pri, alpha_raw_post, party_map)
-alpha <- pri_post_summary(alpha_pri, alpha_post, party_map)
-```
-
-Get draws.
-
-```{r}
-draw_samples <- function(x, party, extract = "tk") {
   df <-
-    x |>
-    as_draws_df() |>
-    as_tibble() |>
-    pivot_longer(-c(.chain, .iteration, .draw), names_to = "variable")
+    bind_rows(df_prior, df_posterior) |>
+    mutate(
+      type = ordered(type, levels = c("prior", "posterior"))
+    ) |>
+    pivot_longer(
+      cols = -c(.chain, .iteration, .draw, type),
+      names_to = "variable"
+    )
 
-  if (!is.null(extract)) {
-    if (extract == "t") {
-      df <-
-        df |>
-        mutate(
-          t = as.numeric(str_extract(variable, r"(\[(\d+)])", group = 1))
-        )
-    } else if (extract == "k") {
-      df <-
-        df |>
-        mutate(
-          k = as.numeric(str_extract(variable, r"(\[(\d+)\])", group = 1))
-        )
-    } else if (extract == "tk") {
-      df <-
-        df |>
-        mutate(
-          t = as.numeric(str_extract(variable, r"(\[(\d+),\d+\])", group = 1)),
-          k = as.numeric(str_extract(variable, r"(\[\d+,(\d+)\])", group = 1))
-        )
-    }
-
-    if (str_detect(extract, "k")) {
-      df <-
-        df |>
-        left_join(
-          party,
-          by = join_by(k == party_stan),
-          relationship = "many-to-one"
-        )
-    }
+  if (length(index_names) > 0) {
+    df <-
+      df |>
+      mutate(indices = str_extract(variable, r"(\[(.+)\])", group = 1)) |>
+      separate_wider_delim(
+        cols = indices,
+        delim = ",",
+        names = index_names
+      ) |>
+      mutate(across(.cols = all_of(index_names), .fns = as.numeric))
   }
 
   return(df)
 }
+```
 
-pri_post_draws <- function(prior_, posterior_, party_map_, extract = "tk") {
-  prior <- NULL
+```{r}
+samples_phi <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "phi"
+)
+
+samples_mu <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "mu",
+  index_names = c("t", "k")
+)
+
+samples_mu_sigma <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "mu_sigma",
+  index_names = c("k")
+)
+
+samples_lambda <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "lambda",
+  index_names = c("t", "k")
+)
+
+samples_lambda_sigma <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "lambda_sigma",
+  index_names = c("k")
+)
+
+samples_y_hat <- pp_draws(
+  prior_ = NULL,
+  posterior_ = fit_post,
+  var = "y_hat",
+  index_names = c("t", "k")
+)
+```
+
+Summarise samples.
+
+```{r}
+pp_summarise <- function(
+  prior_,
+  posterior_,
+  var,
+  index_names = NULL,
+  statistics
+) {
+  df_prior <- NULL
   if (!is.null(prior_)) {
-    prior <- draw_samples(prior_, party_map_, extract = extract)
+    df_prior <-
+      prior_$summary(variable = var, statistics) |>
+      mutate(type = "prior")
   }
-  prior$type <- "prior"
 
-  posterior <- NULL
+  df_posterior <- NULL
   if (!is.null(posterior_)) {
-    posterior <- draw_samples(posterior_, party_map_, extract = extract)
+    df_posterior <-
+      posterior_$summary(variable = var, statistics) |>
+      mutate(type = "posterior")
   }
-  posterior$type <- "posterior"
 
-  bind_rows(prior, posterior)
+  df <-
+    bind_rows(df_prior, df_posterior) |>
+    mutate(
+      type = ordered(type, levels = c("prior", "posterior"))
+    )
+
+  if (length(index_names) > 0) {
+    df <-
+      df |>
+      mutate(indices = str_extract(variable, r"(\[(.+)\])", group = 1)) |>
+      separate_wider_delim(
+        cols = indices,
+        delim = ",",
+        names = index_names
+      ) |>
+      mutate(across(.cols = all_of(index_names), .fns = as.numeric))
+  }
+
+  return(df)
 }
+```
 
-
-mu_raw_draws <- pri_post_draws(
-  mu_raw_pri,
-  mu_raw_post,
-  party_map,
-  extract = "k"
+```{r}
+summary_phi <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "phi",
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-mu_draws <- pri_post_draws(
-  mu_pri,
-  mu_post,
-  party_map,
-  extract = "k"
+summary_mu <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "mu",
+  index_names = c("t", "k"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-beta_draws <- pri_post_draws(
-  beta_pri,
-  beta_post,
-  party_map,
-  extract = "k"
+summary_mu_sigma <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "mu_sigma",
+  index_names = c("k"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-sigma_draws <- pri_post_draws(
-  sigma_pri,
-  NULL,
-  party_map,
-  extract = "k"
+summary_lambda <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "lambda",
+  index_names = c("t", "k"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-alpha_raw_draws <- pri_post_draws(
-  alpha_raw_pri,
-  alpha_raw_post,
-  party_map
+summary_lambda_sigma <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "lambda_sigma",
+  index_names = c("k"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-alpha_draws <- pri_post_draws(
-  alpha_pri,
-  alpha_post,
-  party_map
+summary_y_hat <- pp_summarise(
+  prior_ = NULL,
+  posterior_ = fit_post,
+  var = "y_hat",
+  index_names = c("t", "k"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
 )
 ```
 
-## Quality of chains
+## Variable validation
 
-### Mu raw
-
-```{r}
-mu_raw |>
-  select(type, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
-  pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
-  ) |>
-  ggplot() +
-  geom_point(aes(x = k, y = value, color = type, shape = type), size = 3) +
-  facet_wrap(facets = vars(name), ncol = 1, scale = "free") +
-  scale_x_parties(party_map) +
-  scale_shape_type() +
-  scale_color_type() +
-  theme_bw() +
-  labs(
-    title = "Sampling statistics for parameter: mu_raw"
-  )
-```
-
-### Mu
+### Phi
 
 ```{r}
-mu |>
-  select(type, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
+summary_phi |>
+  select(type, rhat, ess_bulk, ess_tail) |>
   pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
+    cols = -c(type)
   ) |>
   ggplot() +
-  geom_point(aes(x = k, y = value, color = type, shape = type), size = 3) +
-  facet_wrap(facets = vars(name), ncol = 1, scale = "free") +
-  scale_x_parties(party_map) +
-  scale_shape_type() +
-  scale_color_type() +
-  theme_bw() +
-  labs(
-    title = "Sampling statistics for parameter: mu"
-  )
-```
-
-### Beta
-
-```{r}
-beta |>
-  select(type, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
-  pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
-  ) |>
-  ggplot() +
-  geom_point(aes(x = k, y = value, color = type, shape = type), size = 3) +
-  facet_wrap(facets = vars(name), ncol = 1, scale = "free") +
-  scale_x_parties(party_map) +
-  scale_shape_type() +
-  scale_color_type() +
-  theme_bw() +
-  labs(
-    title = "Sampling statistics for parameter: Beta"
-  )
-```
-
-### Sigma
-
-```{r}
-sigma |>
-  select(type, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
-  pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
-  ) |>
-  ggplot() +
-  geom_point(aes(x = k, y = value, color = type, shape = type), size = 3) +
-  facet_wrap(facets = vars(name), ncol = 1, scale = "free") +
-  scale_x_parties(party_map) +
-  scale_shape_type() +
-  scale_color_type() +
-  theme_bw() +
-  labs(
-    title = "Sampling statistics for parameter: Sigma"
-  )
-```
-
-### Alpha raw (log scale)
-
-```{r}
-alpha_raw |>
-  select(type, t, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
-  pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
-  ) |>
-  ggplot() +
-  geom_point(
-    mapping = aes(
-      x = t,
-      y = value,
-      shape = type,
-      color = party_shortcut,
-      group = party_shortcut
-    )
-  ) +
-  scale_color_parties(party_map) +
-  geom_vline(
-    xintercept = unique(data_polls$t),
-    linetype = "dashed",
-    color = "black",
-    alpha = 0.3
-  ) +
+  geom_point(mapping = aes(x = 1, y = value)) +
   facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
-  scale_x_polls(cal) +
-  scale_shape_type() +
   theme_bw() +
-  theme(
-    panel.grid.major.x = element_blank()
-  ) +
   labs(
-    title = "Statistics for alpha_raw",
+    title = "Convergence statistics for parameter: phi",
     x = NULL,
     y = NULL
   )
 ```
 
-### Alpha
+```{r}
+samples_phi |>
+  select(type, value) |>
+  ggplot() +
+  geom_violin(
+    mapping = aes(x = 1, y = value),
+    alpha = 0.4
+  ) +
+  facet_grid(cols = vars(type), scales = "free") +
+  theme_bw() +
+  labs(
+    title = "Copmarison of distributions for parameter: phi",
+    x = NULL,
+    y = NULL
+  )
+```
+
+### Mu
 
 ```{r}
-alpha |>
-  select(type, t, k, party_shortcut, rhat, ess_bulk, ess_tail) |>
-  filter(k != max(k)) |>
+summary_mu |>
+  select(type, t, k, rhat, ess_bulk, ess_tail) |>
   pivot_longer(
-    cols = c(rhat, ess_bulk, ess_tail)
+    cols = -c(type, t, k)
   ) |>
   ggplot() +
-  geom_point(
-    mapping = aes(
-      x = t,
-      y = value,
-      shape = type,
-      color = party_shortcut,
-      group = party_shortcut
-    )
-  ) +
-  scale_color_parties(party_map) +
-  geom_vline(
-    xintercept = unique(data_polls$t),
-    linetype = "dashed",
-    color = "black",
-    alpha = 0.3
-  ) +
+  geom_point(mapping = aes(x = t, y = value, color = factor(k))) +
   facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
-  scale_x_polls(cal) +
-  scale_shape_type() +
   theme_bw() +
-  theme(
-    panel.grid.major.x = element_blank()
-  ) +
+  scale_color_parties(parties = party_map) +
+  scale_x_polls(cal = cal) +
   labs(
-    title = "Statistics for alpha",
+    title = "Convergence statistics for parameter: mu",
     x = NULL,
     y = NULL
   )
 ```
 
-## Distributions
-
-### Mu_raw
-
 ```{r}
-mu_raw_draws |>
-  filter(k != max(k, na.rm = TRUE)) |>
+summary_mu |>
+  select(type, t, k, mean, q5, q95) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
+  geom_line(mapping = aes(x = t, y = mean, color = factor(k))) +
+  geom_errorbar(
+    mapping = aes(x = t, ymin = q5, ymax = q95, color = factor(k)),
+    alpha = 0.4
   ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  facet_grid(cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_polls(cal = cal) +
   labs(
-    title = "Distributions for parameter: mu_raw",
+    title = "Copmarison of distributions for parameter: mu",
     x = NULL,
     y = NULL
   )
 ```
 
-### Mu
+### Mu sigma
 
 ```{r}
-mu_draws |>
-  filter(k != max(k, na.rm = TRUE)) |>
+summary_mu_sigma |>
+  select(type, k, rhat, ess_bulk, ess_tail) |>
+  pivot_longer(
+    cols = -c(type, k)
+  ) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
-  ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  geom_point(mapping = aes(x = k, y = value, color = factor(k))) +
+  facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_parties(parties = party_map) +
   labs(
-    title = "Distributions for parameter: mu",
+    title = "Convergence statistics for parameter: mu sigma",
     x = NULL,
     y = NULL
   )
 ```
 
-### Beta
-
+  
 ```{r}
-beta_draws |>
-  filter(!is.na(k)) |>
+samples_mu_sigma |>
+  select(type, k, value) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
+  geom_violin(
+    mapping = aes(x = k, y = value, fill = factor(k)),
+    alpha = 0.4
   ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  facet_grid(cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_fill_parties(parties = party_map) +
+  scale_x_parties(parties = party_map) +
   labs(
-    title = "Distributions for parameter: beta",
+    title = "Copmarison of distributions for parameter: mu sigma",
     x = NULL,
     y = NULL
   )
 ```
 
-### Sigma
+### Lambda
 
 ```{r}
-sigma_draws |>
-  filter(!is.na(k)) |>
+summary_lambda |>
+  select(type, t, k, rhat, ess_bulk, ess_tail) |>
+  pivot_longer(
+    cols = -c(type, t, k)
+  ) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
-  ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  geom_point(mapping = aes(x = t, y = value, color = factor(k))) +
+  facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_polls(cal = cal) +
   labs(
-    title = "Distributions for parameter: sigma",
+    title = "Convergence statistics for parameter: lambda",
     x = NULL,
     y = NULL
   )
 ```
 
-### Alpha raw (log scale)
-
 ```{r}
-alpha_raw_draws |>
-  filter(k != max(k)) |>
+summary_lambda |>
+  select(type, t, k, mean, q5, q95) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
+  geom_line(mapping = aes(x = t, y = mean, color = factor(k))) +
+  geom_errorbar(
+    mapping = aes(x = t, ymin = q5, ymax = q95, color = factor(k)),
+    alpha = 0.4
   ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  facet_grid(cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_polls(cal = cal) +
+  scale_y_voteshare() +
   labs(
-    title = "Distributions for parameter: alpha_raw",
+    title = "Copmarison of distributions for parameter: lambda",
     x = NULL,
     y = NULL
   )
 ```
 
-### Alpha
+### Lambda sigma
 
 ```{r}
-alpha_draws |>
-  filter(k != max(k)) |>
+summary_lambda_sigma |>
+  select(type, k, rhat, ess_bulk, ess_tail) |>
+  pivot_longer(
+    cols = -c(type, k)
+  ) |>
   ggplot() +
-  geom_density(
-    mapping = aes(
-      x = value,
-      fill = type
-    ),
-    alpha = 0.5
-  ) +
-  facet_wrap(facets = vars(party_shortcut), scales = "free") +
-  scale_fill_type() +
+  geom_point(mapping = aes(x = k, y = value, color = factor(k))) +
+  facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_parties(parties = party_map) +
   labs(
-    title = "Distributions for parameter: alpha",
+    title = "Convergence statistics for parameter: lambda sigma",
+    x = NULL,
+    y = NULL
+  )
+```
+  
+```{r}
+samples_lambda_sigma |>
+  select(type, k, value) |>
+  ggplot() +
+  geom_violin(
+    mapping = aes(x = k, y = value, fill = factor(k)),
+    alpha = 0.4
+  ) +
+  facet_grid(cols = vars(type), scales = "free") +
+  theme_bw() +
+  scale_fill_parties(parties = party_map) +
+  scale_x_parties(parties = party_map) +
+  labs(
+    title = "Copmarison of distributions for parameter: lambda sigma",
     x = NULL,
     y = NULL
   )
 ```
 
-## Posterior checks
-
-### Mu
+## Posterior Predictive Check
 
 ```{r}
-ggplot() +
+known_polls <- 
+  cal |> 
+  filter(t > 0) |> 
+  select(t, voteshare, party) |> 
+  left_join(party_map, by = join_by(party))
+```
+
+```{r}
+summary_lambda |> 
+  select(type, t, k, mean, q5, q95) |> 
+  filter(k != 5) |>
+  ggplot() +
+  geom_line(mapping = aes(x = t, y = mean, color = factor(k))) +
+  geom_errorbar(
+    mapping = aes(x = t, ymin = q5, ymax = q95, color = factor(k)),
+    alpha = 0.4
+  ) +
   geom_point(
-    data = cal,
-    mapping = aes(x = t, y = voteshare, color = party_shortcut)
+    data = known_polls,
+    mapping = aes(x = t, y = voteshare, color = factor(party_stan))
   ) +
-  geom_hline(
-    data = filter(mu, type == "posterior", !is.null(k)),
-    mapping = aes(yintercept = mean, color = party_shortcut)
-  ) +
-  geom_rect(
-    data = filter(mu, type == "posterior", !is.null(k)),
-    mapping = aes(
-      xmin = -Inf,
-      xmax = Inf,
-      ymin = `5.5%`,
-      ymax = `94.5%`,
-      fill = party_shortcut
-    ),
-    alpha = 0.2
-  ) +
-  scale_x_polls(cal) +
-  theme_bw()
+  facet_grid(cols = vars(type), scales = "free") +
+  theme_bw() +
+  scale_color_parties(parties = party_map) +
+  scale_x_polls(cal = cal) +
+  scale_y_voteshare() +
+  labs(
+    title = "Posterior predictive check for: lambda",
+    x = NULL,
+    y = NULL
+  )
 ```
 
-### Alpha
-
 ```{r}
+known_summary_y_hat <-
+  summary_y_hat |> 
+  filter(k != 5)
+
 ggplot() +
-  geom_point(
-    data = cal,
-    mapping = aes(x = t, y = voteshare, color = party_shortcut)
-  ) +
   geom_line(
-    data = filter(alpha, type == "posterior", k != max(k)),
-    mapping = aes(x = t, y = mean, color = party_shortcut)
+    data = known_summary_y_hat,
+    mapping = aes(x = t, y = mean, color = factor(k))
   ) +
   geom_errorbar(
-    data = filter(alpha, type == "posterior", k != max(k)),
-    mapping = aes(
-      x = t,
-      ymin = `5.5%`,
-      ymax = `94.5%`,
-      color = party_shortcut
-    )
+    data = known_summary_y_hat,
+    mapping = aes(x = t, ymin = q5, ymax = q95, color = factor(k)),
+    alpha = 0.4
   ) +
-  scale_x_polls(cal) +
-  scale_y_voteshare() +
+  geom_point(
+    data = known_polls,
+    mapping = aes(x = t, y = voteshare, color = factor(party_stan))
+  ) +
+  theme_bw() +
   scale_color_parties(party_map) +
-  theme_bw()
+  scale_y_voteshare(ylim = 1) +
+  labs(
+    title = "Posterior predictive check for: y_hat",
+    x = NULL,
+    y = NULL
+  )
 ```
 
 ```{r}

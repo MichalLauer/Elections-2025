@@ -1,5 +1,7 @@
 /data/
 .Rproj.user/
 test.R
+
 _*/
 *.exe
+*.RDS
