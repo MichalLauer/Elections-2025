@@ -22,7 +22,7 @@ calendar_long <-
     date_published = seq(start_date, end_date, by = "day")
   ) |>
   mutate(
-    t = row_number() - 1 # t=0 => Initial state
+    t = row_number()
   ) |>
   left_join(
     y = polls_raw,
