@@ -31,6 +31,9 @@ parameters {
   matrix[P, K + 1] lambda_raw_std;
   // Parameters for concentration
   row_vector<lower=0>[H] phi;
+  // H arrays (for every house) with K + 1 elements (for every party)
+  // Sum of every column is zero
+  array[H] sum_to_zero_vector[K + 1] house_bias_raw;
 }
 
 transformed parameters {
@@ -45,7 +48,8 @@ transformed parameters {
   matrix[P, K + 1] lambda_raw;
   for (i in 1:P) {
     int poll_day = yt[i];
-    lambda_raw[i] = mu_raw[poll_day] + lambda_raw_sigma .* lambda_raw_std[i];
+    int house = yh[i];
+    lambda_raw[i] = mu_raw[poll_day] + house_bias_raw[house]' + lambda_raw_sigma .* lambda_raw_std[i];
   }
 
   // Unconstrained latent parameter lambda
@@ -58,8 +62,10 @@ transformed parameters {
   row_vector<lower=0>[P] concentration;
   for (i in 1:P) {
     int house = yh[i];
-    concentration[i] = yn [i] * phi[house];
+    concentration[i] = yn[i] * phi[house];
   }
+
+
 }
 
 model {
@@ -68,11 +74,14 @@ model {
   to_vector(lambda_raw_std) ~ std_normal();
 
   // Non-centered priors for stdev
-  to_vector(mu_raw_sigma) ~ exponential(1);
-  to_vector(lambda_raw_sigma) ~ exponential(1);
+  to_vector(mu_raw_sigma) ~ exponential(80);
+  to_vector(lambda_raw_sigma) ~ exponential(80);
 
   // Concentration
-  phi ~ gamma(8, 10);
+  phi ~ gamma(5, 5);
+  for (h in 1:H) {
+    house_bias_raw[h] ~ normal(0, 0.1 * sqrt((K + 1) * inv(K)));
+  }
     
   // Likelihood is defined for every day with a poll
   if (lik == 1) {
@@ -88,6 +97,12 @@ generated quantities {
   matrix[T, K + 1] mu;
   for (i in 1:T) {
     mu[i] = softmax(mu_raw[i]')';
+  }
+
+  // Generate posteriors for true support mu
+  matrix[H, K + 1] house_bias;
+  for (h in 1:H) {
+    house_bias[h] = exp(house_bias_raw[h])';
   }
 
   // Generate posterior predictive checks for polls

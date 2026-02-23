@@ -5,3 +5,4 @@ test.R
 _*/
 *.exe
 *.RDS
+.vdoc.*

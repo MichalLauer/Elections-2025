@@ -37,8 +37,8 @@ ggplot.
 scale_color_parties <- function(parties) {
   scale_color_manual(
     name = "Party",
-    values = setNames(parties$party_color, parties$party_stan),
-    labels = setNames(parties$party_shortcut, parties$party_stan)
+    values = setNames(parties$party_color, parties$k),
+    labels = setNames(parties$party_shortcut, parties$k)
   )
 }
 
@@ -46,12 +46,9 @@ scale_color_houses <- function(houses) {
   list(
     scale_color_manual(
       name = "Polling House",
-      breaks = as.character(house_map$h),
-      values = setNames(house_map$color, as.character(house_map$h)),
-      labels = setNames(
-        as.character(house_map$agency),
-        as.character(house_map$h)
-      )
+      breaks = houses$h,
+      values = setNames(houses$color, houses$h),
+      labels = setNames(houses$agency, houses$h)
     ),
     theme(
       legend.position = "bottom"
@@ -62,15 +59,15 @@ scale_color_houses <- function(houses) {
 scale_fill_parties <- function(parties) {
   scale_fill_manual(
     name = "Party",
-    values = setNames(parties$party_color, parties$party_stan),
-    labels = setNames(parties$party_shortcut, parties$party_stan)
+    values = setNames(parties$party_color, parties$k),
+    labels = setNames(parties$party_shortcut, parties$k)
   )
 }
 
 scale_x_parties <- function(parties) {
   list(
-    scale_x_continuous(
-      breaks = parties$party_stan,
+    scale_x_discrete(
+      breaks = parties$k,
       labels = parties$party_shortcut
     ),
     theme(
@@ -96,7 +93,7 @@ scale_x_polls <- function(cal) {
 
 scale_x_houses <- function(houses) {
   list(
-    scale_x_continuous(
+    scale_x_discrete(
       breaks = houses$h,
       labels = houses$agency
     ),
@@ -110,14 +107,22 @@ scale_y_voteshare <- function(ylim = 1) {
   list(
     scale_y_continuous(
       name = "voteshare [%]",
-      breaks = seq(0, 1, by = 0.1),
-      minor_breaks = seq(0, 1, by = 0.05),
+      breaks = seq(0, 1, by = 0.05),
+      minor_breaks = seq(0, 1, by = 0.01),
       labels = scales::label_percent(suffix = " %"),
       limits = c(0, ylim),
-      expand = expansion()
+      expand = expansion(),
+      guide = guide_axis(minor.ticks = TRUE)
+    ),
+    # Add the duplicated secondary guide here
+    guides(
+      y.sec = guide_axis(minor.ticks = TRUE, title = "voteshare [%]")
     ),
     theme(
-      panel.grid.minor.y = element_line(linetype = "dashed")
+      panel.grid.minor.y = element_line(linetype = "dashed"),
+      axis.ticks.y.right = element_line(),
+      axis.minor.ticks.y.right = element_line(),
+      axis.minor.ticks.length = unit(-0.1, "cm")
     )
   )
 }
@@ -192,12 +197,12 @@ party_map <-
     party = INCLUDED_PARTIES
   ) |>
   mutate(
-    party_stan = row_number()
+    k = row_number()
   ) |>
   left_join(parties, by = join_by(party)) |>
   bind_rows(tibble(
     party = "0000",
-    party_stan = length(INCLUDED_PARTIES) + 1,
+    k = length(INCLUDED_PARTIES) + 1,
     party_shortcut = "X",
     party_name = "Ostatní",
     party_color = "#000"
@@ -211,7 +216,7 @@ Crate house mapping.
 ```{r}
 house_map <-
   cal |>
-  distinct(h = agency_id, agency) |>
+  distinct(h = agency_id, agency = as.character(agency)) |>
   arrange(h) |>
   mutate(
     color = case_match(
@@ -330,7 +335,7 @@ pp_draws <- function(prior_, posterior_, var, index_names = NULL) {
         delim = ",",
         names = index_names
       ) |>
-      mutate(across(.cols = all_of(index_names), .fns = as.numeric))
+      mutate(across(.cols = all_of(index_names), .fns = as.integer))
   }
 
   return(df)
@@ -350,6 +355,13 @@ samples_concentration <- pp_draws(
   posterior_ = fit_post,
   var = "concentration",
   index_names = c("p")
+)
+
+samples_house_bias <- pp_draws(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "house_bias",
+  index_names = c("h", "k")
 )
 
 samples_mu <- pp_draws(
@@ -441,7 +453,7 @@ pp_summarise <- function(
         delim = ",",
         names = index_names
       ) |>
-      mutate(across(.cols = all_of(index_names), .fns = as.numeric))
+      mutate(across(.cols = all_of(index_names), .fns = as.integer))
   }
 
   return(df)
@@ -462,6 +474,14 @@ summary_concentration <- pp_summarise(
   posterior_ = fit_post,
   var = "concentration",
   index_names = c("p"),
+  statistics = c(default_convergence_measures(), default_summary_measures())
+)
+
+summary_house_bias <- pp_summarise(
+  prior_ = fit_prior,
+  posterior_ = fit_post,
+  var = "house_bias",
+  index_names = c("h", "k"),
   statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
@@ -517,7 +537,7 @@ summary_phi |>
     cols = -c(type, h)
   ) |>
   ggplot() +
-  geom_point(mapping = aes(x = h, y = value, color = factor(h))) +
+  geom_point(mapping = aes(x = factor(h), y = value, color = factor(h))) +
   facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
   scale_color_houses(house_map) +
@@ -534,7 +554,7 @@ samples_phi |>
   select(type, h, value) |>
   ggplot() +
   geom_violin(
-    mapping = aes(x = h, y = value, color = factor(h)),
+    mapping = aes(x = factor(h), y = value, color = factor(h)),
     alpha = 0.4
   ) +
   facet_grid(cols = vars(type), scales = "free") +
@@ -592,6 +612,56 @@ summary_concentration |>
   )
 ```
 
+### House bias
+
+```{r}
+summary_house_bias |>
+  select(type, h, k, rhat, ess_bulk, ess_tail) |>
+  pivot_longer(
+    cols = -c(type, h, k)
+  ) |>
+  left_join(house_map, by = join_by(h), relationship = "many-to-one") |>
+  left_join(party_map, by = join_by(k), relationship = "many-to-one") |>
+  ggplot() +
+  geom_point(mapping = aes(x = factor(h), y = value, color = factor(k))) +
+  facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
+  theme_bw() +
+  scale_color_parties(party_map) +
+  scale_x_houses(house_map) +
+  labs(
+    title = "Convergence statistics for parameter: house bias",
+    x = NULL,
+    y = NULL
+  )
+```
+
+```{r}
+samples_house_bias |>
+  select(type, h, k, value) |>
+  left_join(house_map, by = join_by(h), relationship = "many-to-one") |>
+  left_join(party_map, by = join_by(k), relationship = "many-to-one") |>
+  ggplot() +
+  geom_violin(
+    mapping = aes(x = factor(k), y = value, color = factor(h)),
+    position = position_dodge(width = 0.8)
+  ) +
+  geom_vline(
+    data = tibble(xint = seq(1.5, 4.5, 1)),
+    aes(xintercept = xint),
+    linetype = "dashed"
+  ) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed", color = "lightblue") +
+  facet_wrap(vars(type)) +
+  theme_bw() +
+  scale_color_houses(house_map) +
+  scale_x_parties(party_map) +
+  labs(
+    title = "Convergence statistics for parameter: house bias",
+    x = NULL,
+    y = NULL
+  )
+```
+
 ### Mu
 
 ```{r}
@@ -643,7 +713,7 @@ summary_mu_raw_sigma |>
     cols = -c(type, k)
   ) |>
   ggplot() +
-  geom_point(mapping = aes(x = k, y = value, color = factor(k))) +
+  geom_point(mapping = aes(x = factor(k), y = value, color = factor(k))) +
   facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
   scale_color_parties(parties = party_map) +
@@ -661,7 +731,7 @@ samples_mu_raw_sigma |>
   select(type, k, value) |>
   ggplot() +
   geom_violin(
-    mapping = aes(x = k, y = value, fill = factor(k)),
+    mapping = aes(x = factor(k), y = value, fill = factor(k)),
     alpha = 0.4
   ) +
   facet_grid(cols = vars(type), scales = "free") +
@@ -681,7 +751,7 @@ samples_mu_raw_sigma |>
 samples_mu_raw_std |>
   ggplot() +
   geom_density(
-    aes(x = value, color = factor(k), group = factor(t)),
+    aes(x = value, color = k, group = factor(t)),
     alpha = 0.2
   ) +
   facet_grid(rows = vars(k), cols = vars(type), scales = "free") +
@@ -748,7 +818,7 @@ summary_lambda_raw_sigma |>
     cols = -c(type, k)
   ) |>
   ggplot() +
-  geom_point(mapping = aes(x = k, y = value, color = factor(k))) +
+  geom_point(mapping = aes(x = factor(k), y = value, color = factor(k))) +
   facet_grid(rows = vars(name), cols = vars(type), scales = "free") +
   theme_bw() +
   scale_color_parties(parties = party_map) +
@@ -765,7 +835,7 @@ samples_lambda_raw_sigma |>
   select(type, k, value) |>
   ggplot() +
   geom_violin(
-    mapping = aes(x = k, y = value, fill = factor(k)),
+    mapping = aes(x = factor(k), y = value, fill = factor(k)),
     alpha = 0.4
   ) +
   facet_grid(cols = vars(type), scales = "free") +
@@ -785,7 +855,7 @@ samples_lambda_raw_sigma |>
 samples_lambda_raw_std |>
   ggplot() +
   geom_density(
-    aes(x = value, color = factor(k), group = factor(t)),
+    aes(x = value, color = k, group = factor(t)),
     alpha = 0.2
   ) +
   facet_grid(rows = vars(k), cols = vars(type), scales = "free") +
@@ -848,9 +918,8 @@ ggplot() +
     data = cal_,
     mapping = aes(x = t, y = voteshare, color = factor(agency_id))
   ) +
-  facet_grid(cols = vars(type), scales = "free") +
   theme_bw() +
-  scale_color_houses(houses = house_map) +
+  scale_color_houses(house_map) +
   scale_x_polls(cal = cal) +
   scale_y_voteshare(ylim = 0.5) +
   labs(
@@ -858,4 +927,8 @@ ggplot() +
     x = NULL,
     y = NULL
   )
+```
+
+```{r}
+
 ```
