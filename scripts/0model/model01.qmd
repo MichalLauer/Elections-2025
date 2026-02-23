@@ -2,14 +2,11 @@
 title: Model 01
 ---
 
-- Ignore partie mergers
-- Ignore errors
-
 # Preparation
 
 Load libraries.
 
-```{r packages}
+```{r packages, message=FALSE, warnings=FALSE}
 # Data
 library(nanoparquet)
 library(dplyr)
@@ -31,7 +28,7 @@ options("mc.cores" = future::availableCores() - 1)
 cmdstanr::check_cmdstan_toolchain()
 ```
 
-ggplot.
+ggplot2 helpers.
 
 ```{r ggplot-utils}
 scale_color_parties <- function(parties) {
@@ -114,7 +111,6 @@ scale_y_voteshare <- function(ylim = 1) {
       expand = expansion(),
       guide = guide_axis(minor.ticks = TRUE)
     ),
-    # Add the duplicated secondary guide here
     guides(
       y.sec = guide_axis(minor.ticks = TRUE, title = "voteshare [%]")
     ),
@@ -163,7 +159,7 @@ parties <-
 print(parties, n = 25)
 ```
 
-Get only one poll per day.
+Get only complete polls.
 
 ```{r}
 cal <-
@@ -219,21 +215,21 @@ house_map <-
   distinct(h = agency_id, agency = as.character(agency)) |>
   arrange(h) |>
   mutate(
-    color = case_match(
+    color = recode_values(
       agency,
-      "Ipsos" ~ "#002855", # Dark Blue
-      "Kantar" ~ "#00A3E0", # Light Blue
-      "Median" ~ "#005B9A", # Medium Blue
-      "NMS Market Research" ~ "#93C01F", # Green
-      "STEM" ~ "#DA251D", # Red
-      .default = "#808080" # Fallback gray
+      "Ipsos" ~ "#002855",
+      "Kantar" ~ "#00A3E0",
+      "Median" ~ "#005B9A",
+      "NMS Market Research" ~ "#93C01F",
+      "STEM" ~ "#DA251D",
+      default = "#808080"
     )
   )
 
 house_map
 ```
 
-Create poll-day-of-poll mapping.
+Create poll-day-agency mapping.
 
 ```{r}
 poll_days <-
@@ -751,7 +747,7 @@ samples_mu_raw_sigma |>
 samples_mu_raw_std |>
   ggplot() +
   geom_density(
-    aes(x = value, color = k, group = factor(t)),
+    aes(x = value, color = factor(k), group = factor(t)),
     alpha = 0.2
   ) +
   facet_grid(rows = vars(k), cols = vars(type), scales = "free") +
@@ -855,7 +851,7 @@ samples_lambda_raw_sigma |>
 samples_lambda_raw_std |>
   ggplot() +
   geom_density(
-    aes(x = value, color = k, group = factor(t)),
+    aes(x = value, color = factor(k), group = factor(t)),
     alpha = 0.2
   ) +
   facet_grid(rows = vars(k), cols = vars(type), scales = "free") +
