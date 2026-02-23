@@ -30,7 +30,7 @@ parameters {
   row_vector<lower=0>[K + 1] lambda_raw_sigma;
   matrix[P, K + 1] lambda_raw_std;
   // Parameters for concentration
-  row_vector<lower=0>[H] phi;
+  row_vector[H] phi_raw;
   // H arrays (for every house) with K + 1 elements (for every party)
   // Sum of every column is zero
   array[H] sum_to_zero_vector[K + 1] house_bias_raw;
@@ -58,6 +58,12 @@ transformed parameters {
     lambda[i] = softmax(lambda_raw[i]')';
   }
 
+  // Unconstrained latent parameter phi
+  row_vector[H] phi;
+  for (h in 1:H) {
+    phi[h] = exp(phi_raw[h]);
+  }
+
   // Concentration of polls
   row_vector<lower=0>[P] concentration;
   for (i in 1:P) {
@@ -78,11 +84,11 @@ model {
   to_vector(lambda_raw_sigma) ~ exponential(80);
 
   // Concentration
-  phi ~ gamma(5, 5);
+  phi_raw ~ std_normal();
   for (h in 1:H) {
     house_bias_raw[h] ~ normal(0, 0.1 * sqrt((K + 1) * inv(K)));
   }
-    
+
   // Likelihood is defined for every day with a poll
   if (lik == 1) {
     for (i in 1:P) {
