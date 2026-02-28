@@ -1,12 +1,42 @@
 ---
-title: Model 01
+title: Model 01 - Only complete parties
+author: Michal Lauer
+date: today
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    df-print: paged
+fig-width: 10
+fig-height: 8
 ---
+
+# Introduction
+
+This project analyses the underlying party support measured through polls conducted by various agencies.
+Full code can be found on [GitHub](https://github.com/MichalLauer/Elections-2025).
+
+## Data
+
+The data in this analysis are scraped from [programydovoleb.cz](https://programydovoleb.cz/) and contain all
+polls that have been conducted in regards to the elections to the House of Representatives, 2025 (Volby do poslanecké
+sněmovny v r. 2025). The model does not work with the final results.
+
+## Limitations
+
+- Only parties with no missing data are included in the analysis.
+- No hierarchical priors are currently set.
+- Polls with missing sample size are excluded.
+- Party mergers are ignored (e.g. Piráti + Zelení).
+- It is assumed that all parties are independent, a rather *naïve* assumption.
+- The *Others* party (X) is not usually interpreted as it is a mix of all other parties, thus it would not make much sense.
+- Since this model contains only 4 parties, comparison to the final results should be made with caution.
 
 # Preparation
 
 Load libraries.
 
-```{r packages, message=FALSE, warnings=FALSE}
+```{r packages, output=FALSE}
 # Data
 library(nanoparquet)
 library(dplyr)
@@ -76,8 +106,8 @@ scale_x_parties <- function(parties) {
 scale_x_polls <- function(cal) {
   list(
     scale_x_continuous(
-      name = NULL,
-      breaks = seq(from = 0, to = max(cal$t), by = 50),
+      name = "Days since first poll",
+      breaks = seq(from = 1, to = max(cal$t), by = 50),
       minor_breaks = seq(from = 0, to = max(cal$t), by = 25),
       limits = c(0, max(cal$t)),
       expand = expansion(add = 5)
@@ -156,7 +186,7 @@ parties <-
   read_parquet(config::get("parties", config = "silver")) |>
   filter(party %in% INCLUDED_PARTIES)
 
-print(parties, n = 25)
+parties
 ```
 
 Get only complete polls.
@@ -164,7 +194,7 @@ Get only complete polls.
 ```{r}
 cal <-
   cal |>
-  filter(!is.na(poll_id), !is.na(sample_size))
+  filter(!is.na(sample_size))
 
 cal
 ```
@@ -244,6 +274,40 @@ poll_days
 ```
 
 # Model
+
+$$
+\begin{aligned}
+y_p &\sim Dir(\lambda_p * \kappa_p) \\
+\kappa_p &= \phi_h \cdot n_p \\
+\log(\phi_h) &\sim N(0, 1) \\
+\text{CLR(}\lambda_p\text{)} &\sim N(\mu_p + \beta_h, \sigma_\lambda) \\
+\sigma_\lambda &\sim \text{Exponential}(80) \\
+\text{CLR(}\mu_1\text{)} &\sim N(\text{CLR(}y_1\text{)}, \sigma_\mu) \\
+\text{CLR(}\mu_t\text{)} &\sim N(\text{CLR(}\mu_{t-1}\text{)}, \sigma_\mu) \\
+\sigma_\mu &\sim \text{Exponential}(80) \\
+\sigma_\lambda &\sim \text{Exponential}(80) \\
+\beta_h &\sim N\left(0,\ 0.1 * \sqrt{(K+1)/K}\right) \\
+\sum_{h=1}^H \beta_h &= 0 \\
+\end{aligned}
+$$
+
+where
+
+- $y_p = [y_{p,1}, \ldots, y_{p,K + 1}]'$ - observed voteshare of poll $p = 1, \dots, P$ for parties $1, \dots, K + 1$,
+- $\kappa_p$ - effective sample size of poll $p$,
+- $\phi_h$ - precision of house $h$,
+- $n_p$ - reported sample size of poll $p$,
+- $\text{CLR(}\lambda_p\text{)}$ - centered log-ratio transformed latent parameter $\lambda_p$,
+  - $\lambda_p$ - latent variable in simplex space,
+- $\sigma_\lambda = [\sigma_{\lambda,1}, \ldots, \sigma_{\lambda,K + 1}]'$ - standard deviations of the latent variables $\lambda_k$ for $k = 1, \dots, K + 1$,
+- $\text{CLR(}\mu_t\text{)} = [\mu_{t,1}, \ldots, \mu_{t,K + 1}]'$ - true underlying support of party $k = 1, \dots, K$ at time $t = 1, \dots, T$ in CLR space,
+  - $\mu_t$ - latent variable in simplex space,
+- $\sigma_\mu = [\sigma_{\mu,1}, \ldots, \sigma_{\mu,K + 1}]'$ - standard deviations of the latent variables $\mu_k$ for $k = 1, \dots, K + 1$.
+- $\beta_h = [\beta_{h,1}, \ldots, \beta_{h,K + 1}]'$ - house-specific biases for party $k = 1, \dots, K + 1$ in house $h = 1, \dots, H$.
+
+Notes:
+
+- The $K + 1$-th party is computed dynamically in Stan and it is the "Others" party.
 
 ```{r run-models}
 # Create&Save data
@@ -346,10 +410,10 @@ samples_phi <- pp_draws(
   index_names = c("h")
 )
 
-samples_concentration <- pp_draws(
+samples_kappa <- pp_draws(
   prior_ = fit_prior,
   posterior_ = fit_post,
-  var = "concentration",
+  var = "kappa",
   index_names = c("p")
 )
 
@@ -465,10 +529,10 @@ summary_phi <- pp_summarise(
   statistics = c(default_convergence_measures(), default_summary_measures())
 )
 
-summary_concentration <- pp_summarise(
+summary_kappa <- pp_summarise(
   prior_ = fit_prior,
   posterior_ = fit_post,
-  var = "concentration",
+  var = "kappa",
   index_names = c("p"),
   statistics = c(default_convergence_measures(), default_summary_measures())
 )
@@ -545,6 +609,8 @@ summary_phi |>
   )
 ```
 
+Prior and posterior diagnostics are OK.
+
 ```{r}
 samples_phi |>
   select(type, h, value) |>
@@ -565,10 +631,32 @@ samples_phi |>
   )
 ```
 
-### Concentration
+The prior assumes that the phi parameter (*sample_size* multiplier) is
+centered around 1 with 95% credible intervals around 0.6 and 1.6. We are
+saying implying that every pollster can have variously effective sample sizes. Their 'strength' can be smaller by 40 \% or larger by 60 \%.
 
 ```{r}
-summary_concentration |>
+samples_phi |>
+  group_by(type, variable) |>
+  summarise(
+    mean = mean(value),
+    sd = sd(value),
+    q5 = quantile(value, 0.05),
+    q95 = quantile(value, 0.95),
+    `Pr(x > 1)` = mean(value > 1),
+    `Pr(x < 1)` = mean(value < 1),
+  )
+```
+
+After fitting the model, it can be observed that Ipsos, Kantar and STEM have most probably stronger sample sizes
+compared to other pollsters. This means that their population weights and sampling estimates are likely more reliable.
+Pollster Median is probably the least reliable. NMS Market Research has moved to an average of around 0,95 and while 
+the posterior is certainly less variable, it's central tendency has not moved much.
+
+### Kappa
+
+```{r}
+summary_kappa |>
   select(type, p, rhat, ess_bulk, ess_tail) |>
   pivot_longer(
     cols = -c(type, p)
@@ -587,8 +675,27 @@ summary_concentration |>
   )
 ```
 
+Prior and posterior diagnostics are OK. Even though they all look the same, this is just a scaling issue, as
+kappa for every pollster is dependent on the actual sample size.
+
 ```{r}
-summary_concentration |>
+samples_kappa |>
+  left_join(poll_days, by = join_by(p), relationship = "many-to-one") |>
+  left_join(house_map, by = join_by(h), relationship = "many-to-one") |>
+  group_by(type, agency) |>
+  summarise(
+    mean = mean(value),
+    sd = sd(value)
+  )
+
+```
+
+The posterior effective sample size is larger for pollsters with phi > 1. Even though three polsters (Kantar, Median,
+NMS) have very simmilar starting prior effective sample size, the posterior is different for every one of them. This
+suggests that the model is able to identify pollsters whose polls estimate better the underlying support.
+
+```{r}
+summary_kappa |>
   select(type, p, mean, q5, q95) |>
   left_join(poll_days, by = join_by(p), relationship = "many-to-one") |>
   ggplot() +
@@ -631,9 +738,12 @@ summary_house_bias |>
   )
 ```
 
+Prior and posterior diagnostics are OK.
+
 ```{r}
 samples_house_bias |>
   select(type, h, k, value) |>
+  filter(k != 5) |>
   left_join(house_map, by = join_by(h), relationship = "many-to-one") |>
   left_join(party_map, by = join_by(k), relationship = "many-to-one") |>
   ggplot() +
@@ -642,12 +752,12 @@ samples_house_bias |>
     position = position_dodge(width = 0.8)
   ) +
   geom_vline(
-    data = tibble(xint = seq(1.5, 4.5, 1)),
+    data = tibble(xint = seq(1.5, 3.5, 1)),
     aes(xintercept = xint),
     linetype = "dashed"
   ) +
   geom_hline(aes(yintercept = 1), linetype = "dashed", color = "lightblue") +
-  facet_wrap(vars(type)) +
+  facet_wrap(vars(type), ncol = 1) +
   theme_bw() +
   scale_color_houses(house_map) +
   scale_x_parties(party_map) +
@@ -657,6 +767,13 @@ samples_house_bias |>
     y = NULL
   )
 ```
+
+The prior bias for every party of every polster is identical, centered around 1, typically ranging from 0.8 to 1.2.
+This implies that the typical pollster bias is around 20 % (beta represents odds-ratio). The posterior estimates
+suggest that 3/5 pollsters typically underestimated ANO by around 5 - 15 % (for example, they would estimate support
+of 35 % * 0,85 = 29,75 %). AUTO party was overestimated by 3/5 pollsters by around 5 % and SPOLU was slightly
+underestimated by around 2 %. The posterior suggest that STAN was underestimated the most and no pollsters has
+overstimated them. The underestimation is by around 10 % from 3/5 pollsters.
 
 ### Mu
 
@@ -679,9 +796,16 @@ summary_mu |>
   )
 ```
 
+Prior and posterior diagnostics are OK.
+
+::: {.callout-caution collapse="true"}
+It is interesting that the prior and posterior statistics look like a *chain* - why?
+:::
+
 ```{r}
 summary_mu |>
   select(type, t, k, mean, q5, q95) |>
+  filter(k != 5) |>
   ggplot() +
   geom_line(mapping = aes(x = t, y = mean, color = factor(k))) +
   geom_errorbar(
@@ -692,13 +816,32 @@ summary_mu |>
   theme_bw() +
   scale_color_parties(parties = party_map) +
   scale_x_polls(cal = cal) +
-  scale_y_voteshare() +
+  scale_y_voteshare(ylim = 0.6) +
   labs(
-    title = "Copmarison of distributions for parameter: mu",
+    title = "Comparison of distributions for parameter: mu",
     x = NULL,
     y = NULL
   )
 ```
+
+The prior variance of every party grows in time, because the process is assumed be a random walk. However, even after 
+around a year of not observing a single poll, the party support of the strongest party most probably won't grow over
+50 %. Without observing any other polls, the underlying support also does not change and is constant, with increasing
+variance.
+
+::: {.callout-caution collapse="true"}
+Theoretically, the variance should not be the same and for larger parties, it should be smaller compared to smaller
+parties. Also, for AUTO, the variance is not symmetrical as it could grow belo 0 and it is thus cut. Needs to be
+dealt with.
+:::
+
+The posterior shows the estimated support for each party.
+
+::: {.callout-caution collapse="true"}
+The variance should be much smaller on days when the poll is observed, and should grow the longer we have without a 
+poll. I *think* this is happening, because at the start, this can be observed. Later on, there is many polls and thus,
+this effect is probably not seen. Need to check.
+:::
 
 ### Mu raw sigma
 
@@ -721,7 +864,8 @@ summary_mu_raw_sigma |>
   )
 ```
 
-  
+Prior and posterior diagnostics are OK.
+
 ```{r}
 samples_mu_raw_sigma |>
   select(type, k, value) |>
@@ -741,6 +885,9 @@ samples_mu_raw_sigma |>
   )
 ```
 
+Representation of variance on the log scale, and thus, it is not very interpretable. The posterior is however largest
+for AUTO, implying that their support has been the most shakiest.
+
 ### mu raw std
 
 ```{r}
@@ -759,6 +906,10 @@ samples_mu_raw_std |>
     y = NULL
   )
 ```
+
+This is the representation of non-centered latent parameter mu. All these samples should theoretically have standard
+normal distribution. If not, it could indicate a miss-specified model where some of the variance in the latent
+variable is hidden in this non-centered variable. There are no large deviations from the expected distribution.
 
 ### Lambda
 
@@ -782,9 +933,12 @@ summary_lambda |>
   )
 ```
 
+Prior and posterior diagnostics are OK.
+
 ```{r}
 summary_lambda |>
   select(type, p, k, mean, q5, q95) |>
+  filter(k != 5) |>
   left_join(poll_days, by = join_by(p), relationship = "many-to-one") |>
   ggplot() +
   geom_point(mapping = aes(x = t, y = mean, color = factor(k))) +
@@ -797,13 +951,17 @@ summary_lambda |>
   theme_bw() +
   scale_color_parties(parties = party_map) +
   scale_x_polls(cal = cal) +
-  scale_y_voteshare() +
+  scale_y_voteshare(ylim = 0.6) +
   labs(
-    title = "Copmarison of distributions for parameter: lambda",
+    title = "Comparison of distributions for parameter: lambda",
     x = NULL,
     y = NULL
   )
 ```
+
+Lambda represents individual polls and their variance. Again, it can be observed (apriori) that the longer the model
+goes without new polls, the larger the variance is. The underlying support measured by the poll is again not changing.
+When the model accounts for data, the posterior intervals are much smaller.
 
 ### Lambda raw sigma
 
@@ -826,9 +984,12 @@ summary_lambda_raw_sigma |>
   )
 ```
 
+Prior and posterior diagnostics are OK.
+
 ```{r}
 samples_lambda_raw_sigma |>
   select(type, k, value) |>
+  filter(k != 5) |>
   ggplot() +
   geom_violin(
     mapping = aes(x = factor(k), y = value, fill = factor(k)),
@@ -845,7 +1006,11 @@ samples_lambda_raw_sigma |>
   )
 ```
 
-### mu raw std
+The variance is defined in log odds and is thus not clearly interpretable. The posterior distributions do not change
+much for ANO, Spolu and STAN - they became primarly narrower. For AUTO, the variance is much larger and the tail
+is very large, suggesting (again) that the variance of party is inconsistent.
+
+### lambda raw std
 
 ```{r}
 samples_lambda_raw_std |>
@@ -864,7 +1029,13 @@ samples_lambda_raw_std |>
   )
 ```
 
+This is the representation of non-centered latent parameter lambda. All these samples should theoretically have standard
+normal distribution. If not, it could indicate a miss-specified model where some of the variance in the latent
+variable is hidden in this non-centered variable. There are no large deviations from the expected distribution.
+
 ## Posterior Predictive Check
+
+Prepare data.
 
 ```{r}
 summary_mu_ <-
@@ -882,6 +1053,8 @@ cal_ <-
   select(t, agency_id, voteshare, party) |>
   left_join(party_map, by = join_by(party), relationship = "many-to-one")
 ```
+
+Plot PPC.
 
 ```{r}
 ggplot() +
@@ -925,6 +1098,22 @@ ggplot() +
   )
 ```
 
-```{r}
+The line, colored by each party, represents the true underlying party support measured by mu. This latent variable
+is defined at every time point t and it's variance represents the uncertainty about the true support for each party.
+The dots, colored by polling houses, represent the observed party support through the pollsters poll. They are
+defined only on days when there was at least one poll. This observed data point does not have any variance nor uncertainty displayed. The cross, colored by the same way as observed polls, represents the average estimated
+poll support with 95 % credible intervals. This is the posterior distribution of party support from a given poll.
 
-```
+Look at the second and third poll for party STAN. These polls happened at the same day, and are thus displayed on
+the same x-axis line. The blue dot - poll conducted by kantar - is much closer to the estimated true party 
+support. It is also very close to the estimated posterior average poll support, the latent variable lambda. On the
+other hand, the red dot - poll by STEM - is much lower and lies outside of the estimated credible intervals for both
+the underlying support mu and the poll uncertainty lambda. This suggest that this poll is an outlier - for some reason,
+STEM estimated the support to be much lower than it probably was, and the model is able to measure this discrepancy.
+This can be observed on some polls for all parties.
+
+Finally, the estimated party support as a whole can be compared to the poll estimates. The ANO party has been
+consistently underestimated by STEM and NMS, and most of the polls conducted are way outside of the 95%
+credible intervals. On the other hand, party ODS has been consistently overestimated by all pollsters, with most
+polls falling well above the credible intervals. On the other hand, the SPOLU party was, on average, estaimted
+well by the polls.

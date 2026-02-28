@@ -65,10 +65,10 @@ transformed parameters {
   }
 
   // Concentration of polls
-  row_vector<lower=0>[P] concentration;
+  row_vector<lower=0>[P] kappa;
   for (i in 1:P) {
     int house = yh[i];
-    concentration[i] = yn[i] * phi[house];
+    kappa[i] = yn[i] * phi[house];
   }
 
 
@@ -84,7 +84,7 @@ model {
   to_vector(lambda_raw_sigma) ~ exponential(80);
 
   // Concentration
-  phi_raw ~ std_normal();
+  phi_raw ~ normal(0, 0.3);
   for (h in 1:H) {
     house_bias_raw[h] ~ normal(0, 0.1 * sqrt((K + 1) * inv(K)));
   }
@@ -92,7 +92,7 @@ model {
   // Likelihood is defined for every day with a poll
   if (lik == 1) {
     for (i in 1:P) {
-      y_full[i] ~ dirichlet(lambda[i] * concentration[i]);
+      y_full[i] ~ dirichlet(lambda[i] * kappa[i]);
     }
 
   }
@@ -115,7 +115,7 @@ generated quantities {
   matrix[P, K + 1] y_hat;
   for (i in 1:P) {
     int house = yh[i];
-    real concentration_gen = yn[i] * phi[house];
-    y_hat[i] = dirichlet_rng(lambda[i]' * concentration_gen)';
+    real kappa_gen = yn[i] * phi[house];
+    y_hat[i] = dirichlet_rng(lambda[i]' * kappa_gen)';
   }
 }
